@@ -456,8 +456,8 @@ if st.sidebar.button("🚀 Ajustar modelo", type="primary"):
     # Beta coefficients
     st.subheader("📈 Coeficientes por canal")
     fig_betas = viz.plot_beta_coefficients(media_cols, beta_means)
-    st.plotly_chart(fig_betas, use_container_width=True)
-    
+    st.plotly_chart(fig_betas, use_container_width=True)  # Streamlit aún lo soporta, pero la versión 1.28+ prefiere width='stretch'
+
     # Contributions table
     st.subheader("💰 Contribuciones, ROI y ROAS por canal")
     

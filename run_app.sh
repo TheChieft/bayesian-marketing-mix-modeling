@@ -4,6 +4,16 @@
 echo "🚀 Iniciando Marketing Mix Modeling Dashboard..."
 echo ""
 
+# Limpiar cache de Streamlit y Python
+echo "🔄 Limpiando cache..."
+find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null
+find . -type f -name "*.pyc" -delete 2>/dev/null
+if [ -d ~/.streamlit/cache ]; then
+    rm -rf ~/.streamlit/cache/* 2>/dev/null
+fi
+echo "✅ Cache limpiado"
+echo ""
+
 # Activar entorno conda
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate mmm_bayes

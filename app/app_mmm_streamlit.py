@@ -128,7 +128,7 @@ changed = {k: v for k, v in name_map.items() if k != v}
 if changed:
     with st.expander("ℹ️ Columnas renombradas (para uso seguro en el modelo)"):
         rename_df = pd.DataFrame(list(changed.items()), columns=["Nombre original", "Nombre en el modelo"])
-        st.dataframe(rename_df, use_container_width=True)
+        st.dataframe(rename_df, width="stretch")
         st.caption("Las columnas se renombran automáticamente para evitar caracteres especiales que podrían causar errores.")
 
 # Data preview with info
@@ -141,7 +141,7 @@ with col2:
 with col3:
     st.metric("Fuente", data_source, delta=None)
 
-st.dataframe(df.head(10), use_container_width=True)
+st.dataframe(df.head(10), width="stretch")
 
 # ============================================================================
 # Sidebar: Model Configuration
@@ -451,12 +451,12 @@ if st.sidebar.button("🚀 Ajustar modelo", type="primary"):
     
     # Posterior summary
     with st.expander("🔬 Resumen bayesiano (ArviZ)"):
-        st.dataframe(summary, use_container_width=True)
+        st.dataframe(summary, width="stretch")
     
     # Beta coefficients
     st.subheader("📈 Coeficientes por canal")
     fig_betas = viz.plot_beta_coefficients(media_cols, beta_means)
-    st.plotly_chart(fig_betas, use_container_width=True)  # Streamlit aún lo soporta, pero la versión 1.28+ prefiere width='stretch'
+    st.plotly_chart(fig_betas, width="stretch")  # Streamlit aún lo soporta, pero la versión 1.28+ prefiere width='stretch'
 
     # Contributions table
     st.subheader("💰 Contribuciones, ROI y ROAS por canal")
@@ -503,7 +503,7 @@ if st.sidebar.button("🚀 Ajustar modelo", type="primary"):
     
     st.dataframe(
         contrib_df_display.style.format(format_dict),
-        use_container_width=True
+        width="stretch"
     )
     
     if 'CI_lower' in contrib_df_display.columns:
@@ -620,7 +620,7 @@ if st.sidebar.button("🚀 Ajustar modelo", type="primary"):
     
     # Incremental sales
     fig_inc = viz.plot_incremental_sales(media_cols, contributions)
-    st.plotly_chart(fig_inc, use_container_width=True)
+    st.plotly_chart(fig_inc, width="stretch")
     
     # Pie and waterfall side by side
     col1, col2 = st.columns(2)
@@ -629,18 +629,18 @@ if st.sidebar.button("🚀 Ajustar modelo", type="primary"):
         fig_pie = viz.plot_contribution_pie(
             media_cols, contributions, baseline_total, residual_total
         )
-        st.plotly_chart(fig_pie, use_container_width=True)
+        st.plotly_chart(fig_pie, width="stretch")
     
     with col2:
         fig_waterfall = viz.plot_waterfall(
             media_cols, contributions, baseline_total, residual_total, total_sales
         )
-        st.plotly_chart(fig_waterfall, use_container_width=True)
+        st.plotly_chart(fig_waterfall, width="stretch")
     
     # Actual vs Predicted
     st.subheader("🎯 Ajuste del modelo: Real vs Predicho")
     fig_pred = viz.plot_actual_vs_predicted(y_true, y_pred, target_col)
-    st.plotly_chart(fig_pred, use_container_width=True)
+    st.plotly_chart(fig_pred, width="stretch")
     
     # Diagnostic plots
     with st.expander("🔬 Diagnósticos del Modelo", expanded=False):
@@ -656,16 +656,16 @@ if st.sidebar.button("🚀 Ajustar modelo", type="primary"):
         
         with col_diag1:
             fig_resid_vs_pred = viz.plot_residuals_vs_predicted(y_pred, residuals)
-            st.plotly_chart(fig_resid_vs_pred, use_container_width=True)
+            st.plotly_chart(fig_resid_vs_pred, width="stretch")
         
         with col_diag2:
             fig_resid_hist = viz.plot_residuals_histogram(residuals)
-            st.plotly_chart(fig_resid_hist, use_container_width=True)
+            st.plotly_chart(fig_resid_hist, width="stretch")
         
         # Q-Q Plot
         try:
             fig_qq = viz.plot_qq_plot(residuals)
-            st.plotly_chart(fig_qq, use_container_width=True)
+            st.plotly_chart(fig_qq, width="stretch")
         except Exception as e:
             st.warning(f"⚠️ No se pudo generar Q-Q plot: {e}")
     

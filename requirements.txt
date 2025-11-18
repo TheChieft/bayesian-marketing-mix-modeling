@@ -8,3 +8,16 @@ scipy==1.16.3
 six==1.17.0
 statsmodels==0.14.5
 tzdata==2025.2
+
+# Additional runtime dependencies required by the app (Fase 5 features)
+# Core: Streamlit UI and plotting
+streamlit
+plotly
+
+# Bayesian inference and diagnostics
+pymc
+arviz
+
+# Utilities
+scikit-learn
+tabulate

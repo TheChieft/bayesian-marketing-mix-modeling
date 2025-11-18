@@ -104,7 +104,7 @@ def fit_mmm_model(
 def predict_posterior(
     model: pm.Model,
     idata: az.InferenceData,
-    X: np.ndarray
+    X: np.ndarray = None
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Generate posterior predictive samples.
@@ -112,13 +112,12 @@ def predict_posterior(
     Args:
         model: Fitted PyMC model
         idata: InferenceData from fitting
-        X: Feature matrix for prediction (standardized)
+        X: Feature matrix for prediction (standardized). If None, uses the data from fitting.
         
     Returns:
         Tuple of (predictions_mean, predictions_std) in standardized scale
     """
     with model:
-        pm.set_data({"X": X})
         ppc = pm.sample_posterior_predictive(
             idata,
             var_names=["y_obs"],

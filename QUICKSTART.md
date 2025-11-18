@@ -28,6 +28,13 @@ conda activate mmm_bayes
 streamlit run app/app_mmm_streamlit.py
 ```
 
+**Nuevas características UX (Fase 3 & 4):**
+- 📁 **Selector de dataset**: Elige entre ejemplo incluido o subir tu propio CSV
+- ✅ **Validación automática**: Verifica que tu CSV tenga el formato correcto
+- 📊 **Escala de unidades**: Muestra valores en unidades originales, miles o millones
+- 💡 **Insights automáticos**: Análisis de negocio generado automáticamente
+- 📥 **Reporte descargable**: Descarga todo el análisis en formato Markdown
+
 ### Opción 2: Usar mmm_core en Python
 
 ```python

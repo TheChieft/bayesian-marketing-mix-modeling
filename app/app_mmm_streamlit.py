@@ -47,22 +47,78 @@ Dashboard basado en PyMC que ajusta un modelo bayesiano de MMM usando:
 
 st.sidebar.header("📊 Datos")
 
-uploaded_file = st.sidebar.file_uploader(
-    "Sube tu archivo CSV",
-    type=["csv"],
-    help="El archivo debe contener columnas de inversión en medios y ventas"
+# Initialize session state for persistence
+if 'target_col' not in st.session_state:
+    st.session_state.target_col = None
+if 'media_cols' not in st.session_state:
+    st.session_state.media_cols = []
+if 'unit_scale' not in st.session_state:
+    st.session_state.unit_scale = "original"
+
+# Dataset mode selector
+dataset_mode = st.sidebar.radio(
+    "Modo de dataset",
+    ["📁 Usar dataset de ejemplo (Basemediosfinal.csv)", "📤 Subir dataset propio (CSV)"],
+    help="Elige si quieres usar el dataset de demostración o subir tu propio archivo"
 )
 
-if uploaded_file:
+df_raw = None
+data_source = ""
+
+if dataset_mode.startswith("📁"):
+    # Use example dataset
     try:
-        df_raw = pd.read_csv(uploaded_file)
-        st.sidebar.success("✅ Datos cargados correctamente")
-    except Exception as e:
-        st.sidebar.error(f"❌ Error al cargar archivo: {e}")
-        st.stop()
+        df_raw = data.load_example_dataset()
+        data_source = "Dataset de ejemplo (Basemediosfinal.csv)"
+        st.sidebar.success("✅ Dataset de ejemplo cargado")
+    except FileNotFoundError as e:
+        st.sidebar.error(f"❌ {e}")
+        st.error("El dataset de ejemplo no está disponible. Por favor, súbelo o usa datos sintéticos.")
+        df_raw = data.generate_synthetic_data(n=200, seed=42)
+        data_source = "Datos sintéticos generados"
 else:
-    st.sidebar.info("📝 No se cargó archivo. Usando datos sintéticos.")
-    df_raw = data.generate_synthetic_data(n=200, seed=42)
+    # Upload own dataset
+    uploaded_file = st.sidebar.file_uploader(
+        "Sube tu archivo CSV",
+        type=["csv"],
+        help="El archivo debe contener columnas de inversión en medios y ventas"
+    )
+    
+    if uploaded_file:
+        try:
+            df_raw = pd.read_csv(uploaded_file)
+            data_source = f"Archivo subido: {uploaded_file.name}"
+            
+            # Validate schema
+            is_valid, error_msg, numeric_cols = data.validate_dataset_schema(df_raw)
+            
+            if not is_valid:
+                st.sidebar.error("❌ Validación fallida")
+                st.error(f"### ⚠️ Problema con el dataset\n\n{error_msg}")
+                st.info("""
+                **💡 Consejo**: Tu archivo CSV debe tener:
+                - Al menos 10 filas de datos
+                - Al menos 2 columnas numéricas (1 para ventas + 1+ para medios)
+                - Sin columnas con >50% de valores faltantes
+                
+                **Ejemplo de formato correcto:**
+                ```
+                Fecha,TV_Budget,Radio_Budget,Digital_Budget,Sales
+                2024-01-01,1000,500,300,5000
+                2024-01-02,1200,600,350,5500
+                ...
+                ```
+                """)
+                st.stop()
+            else:
+                st.sidebar.success(f"✅ Datos válidos ({len(df_raw)} filas, {len(numeric_cols)} cols numéricas)")
+        except Exception as e:
+            st.sidebar.error(f"❌ Error al cargar: {e}")
+            st.stop()
+    else:
+        st.sidebar.info("📝 Esperando archivo...")
+        st.info("👈 Por favor, sube un archivo CSV para continuar.")
+        st.stop()
 
 # Sanitize column names
 df, name_map = data.sanitize_columns(df_raw)
@@ -71,13 +127,20 @@ df, name_map = data.sanitize_columns(df_raw)
 changed = {k: v for k, v in name_map.items() if k != v}
 if changed:
     with st.expander("ℹ️ Columnas renombradas (para uso seguro en el modelo)"):
-        st.dataframe(
-            pd.DataFrame(list(changed.items()), columns=["Original", "Renombrada"]),
-            use_container_width=True
-        )
+        rename_df = pd.DataFrame(list(changed.items()), columns=["Nombre original", "Nombre en el modelo"])
+        st.dataframe(rename_df, use_container_width=True)
+        st.caption("Las columnas se renombran automáticamente para evitar caracteres especiales que podrían causar errores.")
 
-# Data preview
+# Data preview with info
 st.subheader("📋 Vista previa de los datos")
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.metric("Filas", len(df))
+with col2:
+    st.metric("Columnas", len(df.columns))
+with col3:
+    st.metric("Fuente", data_source, delta=None)
+
 st.dataframe(df.head(10), use_container_width=True)
 
 # ============================================================================
@@ -134,6 +197,29 @@ method = st.sidebar.selectbox(
     index=0,
     help="ADVI es rápido (recomendado), NUTS es más preciso pero lento"
 )
+
+# Unit scale selector
+st.sidebar.subheader("📊 Escala de unidades")
+
+unit_scale = st.sidebar.selectbox(
+    "Mostrar valores en",
+    options=["original", "thousands", "millions"],
+    format_func=lambda x: {
+        "original": "Unidades originales",
+        "thousands": "Miles",
+        "millions": "Millones"
+    }[x],
+    index=0,
+    help="Escala para mostrar contribuciones e inversiones"
+)
+
+currency = st.sidebar.text_input(
+    "Moneda",
+    value="COP",
+    help="Código de moneda (ej: COP, USD, EUR)"
+)
+
+st.session_state.unit_scale = unit_scale
 
 # ============================================================================
 # Model Fitting
@@ -250,9 +336,20 @@ if st.sidebar.button("🚀 Ajustar modelo", type="primary"):
     # Contributions table
     st.subheader("💰 Contribuciones, ROI y ROAS por canal")
     
+    # Apply unit scaling
+    unit_label = metrics.get_unit_label(unit_scale, currency)
+    
+    contrib_df_display = contrib_df.copy()
+    contrib_df_display["Contribución_total"] = contrib_df_display["Contribución_total"].apply(
+        lambda x: metrics.scale_to_units(x, unit_scale)
+    )
+    contrib_df_display["Inversión_total"] = contrib_df_display["Inversión_total"].apply(
+        lambda x: metrics.scale_to_units(x, unit_scale)
+    )
+    
     # Format and display table
     st.dataframe(
-        contrib_df.style.format({
+        contrib_df_display.style.format({
             "Coeficiente_gamma": "{:.6f}",
             "Contribución_total": "{:,.2f}",
             "Inversión_total": "{:,.2f}",
@@ -261,6 +358,108 @@ if st.sidebar.button("🚀 Ajustar modelo", type="primary"):
             "Share_of_Sales": "{:.2%}"
         }),
         use_container_width=True
+    )
+    
+    st.caption(f"💡 Valores mostrados en: **{unit_label}**")
+    
+    # ========================================================================
+    # Business Insights Section
+    # ========================================================================
+    
+    st.subheader("📌 Insights de Negocio")
+    st.markdown("Análisis automático basado en los resultados del modelo:")
+    
+    # Generate insights
+    total_budget = contrib_df["Inversión_total"].sum()
+    insights = metrics.generate_business_insights(contrib_df, total_sales, total_budget)
+    
+    # Display insights
+    for insight in insights:
+        st.markdown(insight)
+    
+    # Download report button
+    st.markdown("---")
+    
+    # Generate report content
+    report_content = f"""# Reporte de Marketing Mix Modeling
+## Fecha: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+---
+
+## 📊 Configuración del Modelo
+
+- **Dataset**: {data_source}
+- **Variable objetivo**: {target_col}
+- **Variables de medios**: {', '.join(media_cols)}
+- **Tasa de Adstock**: {adstock_rate}
+- **Curvatura Hill (γ)**: {hill_gamma}
+- **Método de inferencia**: {method.upper()}
+- **Escala de unidades**: {unit_label}
+
+---
+
+## 📈 Métricas de Ajuste
+
+- **R²**: {fit_metrics['R2']:.3f}
+- **RMSE**: {fit_metrics['RMSE']:,.3f}
+- **MAPE**: {fit_metrics['MAPE']:.2f}%
+
+---
+
+## 💰 Contribuciones por Canal
+
+{contrib_df.to_markdown(index=False)}
+
+---
+
+## 📌 Insights de Negocio
+
+"""
+    
+    for i, insight in enumerate(insights, 1):
+        # Remove markdown formatting for plain text
+        clean_insight = insight.replace("**", "").replace("*", "")
+        report_content += f"{i}. {clean_insight}\n"
+    
+    report_content += f"""
+
+---
+
+## 📊 Resumen Ejecutivo
+
+### Ventas Totales
+- Total: {metrics.scale_to_units(total_sales, unit_scale):,.2f} {unit_label}
+- Baseline: {metrics.scale_to_units(baseline_total, unit_scale):,.2f} {unit_label} ({baseline_total/total_sales*100:.1f}%)
+
+### Performance por Canal
+"""
+    
+    for _, row in contrib_df.iterrows():
+        contrib_scaled = metrics.scale_to_units(row['Contribución_total'], unit_scale)
+        invest_scaled = metrics.scale_to_units(row['Inversión_total'], unit_scale)
+        report_content += f"""
+**{row['Canal']}**
+- Contribución: {contrib_scaled:,.2f} {unit_label} ({row['Share_of_Sales']*100:.1f}% de ventas)
+- Inversión: {invest_scaled:,.2f} {unit_label}
+- ROI: {row['ROI']*100:.1f}%
+- ROAS: {row['ROAS']:.2f}
+"""
+    
+    report_content += f"""
+
+---
+
+*Reporte generado automáticamente por Marketing Mix Modeling Dashboard*
+*Desarrollado por TheChieft*
+"""
+    
+    # Download button
+    st.download_button(
+        label="📥 Descargar Reporte Completo (Markdown)",
+        data=report_content,
+        file_name=f"mmm_report_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.md",
+        mime="text/markdown",
+        help="Descarga un reporte completo con métricas, contribuciones e insights"
     )
     
     # Visualizations

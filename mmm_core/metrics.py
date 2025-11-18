@@ -4,7 +4,7 @@ Performance metrics, contribution analysis, and ROI/ROAS calculations.
 
 import numpy as np
 import pandas as pd
-from typing import Dict, Tuple
+from typing import Dict, Tuple, List
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, r2_score
 
@@ -205,3 +205,192 @@ def format_metrics_display(metrics: Dict[str, float]) -> Dict[str, str]:
         formatted["MAPE"] = f"{metrics['MAPE']:.2f}%" if not np.isnan(metrics['MAPE']) else "N/A"
     
     return formatted
+
+
+def scale_to_units(value: float, unit_scale: str = "original") -> float:
+    """
+    Scale a value to specified units for display.
+    
+    Args:
+        value: Original value
+        unit_scale: Target scale ("original", "thousands", "millions", "billions")
+        
+    Returns:
+        Scaled value
+    """
+    scales = {
+        "original": 1,
+        "thousands": 1_000,
+        "millions": 1_000_000,
+        "billions": 1_000_000_000
+    }
+    
+    return value / scales.get(unit_scale, 1)
+
+
+def get_unit_label(unit_scale: str = "original", currency: str = "COP") -> str:
+    """
+    Get the appropriate unit label for display.
+    
+    Args:
+        unit_scale: Scale being used
+        currency: Currency code
+        
+    Returns:
+        Formatted unit label
+    """
+    if unit_scale == "original":
+        return currency
+    elif unit_scale == "thousands":
+        return f"Miles de {currency}"
+    elif unit_scale == "millions":
+        return f"Millones de {currency}"
+    elif unit_scale == "billions":
+        return f"Miles de millones de {currency}"
+    else:
+        return currency
+
+
+def generate_business_insights(
+    contrib_df: pd.DataFrame,
+    total_sales: float,
+    total_budget: float = None
+) -> List[str]:
+    """
+    Generate business insights from contribution and ROI/ROAS analysis.
+    
+    Analyzes the contribution DataFrame to identify:
+    - Top performing channels
+    - Underperforming channels
+    - Investment efficiency (over/under-invested channels)
+    - Budget allocation recommendations
+    
+    Args:
+        contrib_df: DataFrame with columns [Canal, Contribución_total, 
+                    Inversión_total, ROI, ROAS, Share_of_Sales]
+        total_sales: Total sales value
+        total_budget: Total marketing budget (optional)
+        
+    Returns:
+        List of insight strings
+    """
+    insights = []
+    
+    # Ensure required columns exist
+    required_cols = ["Canal", "Contribución_total", "Inversión_total", "ROI", "ROAS", "Share_of_Sales"]
+    if not all(col in contrib_df.columns for col in required_cols):
+        return ["⚠️ Datos insuficientes para generar insights"]
+    
+    # Sort by different metrics
+    by_share = contrib_df.sort_values("Share_of_Sales", ascending=False)
+    by_roas = contrib_df.sort_values("ROAS", ascending=False)
+    by_roi = contrib_df.sort_values("ROI", ascending=False)
+    
+    # Calculate budget shares
+    if total_budget is None:
+        total_budget = contrib_df["Inversión_total"].sum()
+    
+    contrib_df["Share_of_Budget"] = contrib_df["Inversión_total"] / total_budget
+    
+    # 1. Top performer by sales contribution
+    top_channel = by_share.iloc[0]
+    insights.append(
+        f"🏆 **Canal de mayor impacto**: {top_channel['Canal']} genera el "
+        f"{top_channel['Share_of_Sales']*100:.1f}% de las ventas totales "
+        f"({top_channel['Contribución_total']:,.0f} en ventas)."
+    )
+    
+    # 2. Best ROAS
+    best_roas_channel = by_roas.iloc[0]
+    if not np.isnan(best_roas_channel['ROAS']) and best_roas_channel['ROAS'] > 0:
+        insights.append(
+            f"💰 **Mayor eficiencia (ROAS)**: {best_roas_channel['Canal']} retorna "
+            f"${best_roas_channel['ROAS']:.2f} por cada $1 invertido."
+        )
+    
+    # 3. Best ROI
+    best_roi_channel = by_roi.iloc[0]
+    if not np.isnan(best_roi_channel['ROI']) and best_roi_channel['ROI'] > 0:
+        insights.append(
+            f"📈 **Mayor ROI**: {best_roi_channel['Canal']} con ROI de "
+            f"{best_roi_channel['ROI']*100:.1f}% (ganancia neta por inversión)."
+        )
+    
+    # 4. Underperforming channel (low ROAS + high spend)
+    median_investment = contrib_df["Inversión_total"].median()
+    median_roas = contrib_df["ROAS"].median()
+    
+    underperformers = contrib_df[
+        (contrib_df["ROAS"] < median_roas) & 
+        (contrib_df["Inversión_total"] > median_investment)
+    ]
+    
+    if not underperformers.empty:
+        worst = underperformers.iloc[0]
+        insights.append(
+            f"⚠️ **Candidato para optimización**: {worst['Canal']} tiene alto gasto "
+            f"({worst['Inversión_total']:,.0f}) pero ROAS bajo ({worst['ROAS']:.2f}). "
+            f"Considere reducir presupuesto o mejorar la estrategia."
+        )
+    
+    # 5. Over/under-invested channels
+    for _, row in contrib_df.iterrows():
+        channel = row['Canal']
+        share_budget = row['Share_of_Budget']
+        share_sales = row['Share_of_Sales']
+        
+        # Under-invested: generates more sales than budget share
+        if share_sales > share_budget * 1.2:  # 20% threshold
+            diff_pct = (share_sales - share_budget) * 100
+            insights.append(
+                f"📊 **Sub-invertido**: {channel} genera {share_sales*100:.1f}% de ventas "
+                f"con solo {share_budget*100:.1f}% del presupuesto (+{diff_pct:.1f}pp). "
+                f"**Recomendación**: Aumentar inversión."
+            )
+        
+        # Over-invested: consumes more budget than sales generation
+        elif share_budget > share_sales * 1.2:  # 20% threshold
+            diff_pct = (share_budget - share_sales) * 100
+            insights.append(
+                f"📊 **Sobre-invertido**: {channel} consume {share_budget*100:.1f}% del presupuesto "
+                f"pero solo genera {share_sales*100:.1f}% de ventas (-{diff_pct:.1f}pp). "
+                f"**Recomendación**: Reducir inversión o mejorar efectividad."
+            )
+    
+    # 6. General budget efficiency
+    avg_roas = contrib_df["ROAS"].mean()
+    if not np.isnan(avg_roas):
+        if avg_roas >= 2.0:
+            insights.append(
+                f"✅ **Eficiencia general**: ROAS promedio de {avg_roas:.2f} indica "
+                f"excelente retorno de inversión en marketing."
+            )
+        elif avg_roas >= 1.0:
+            insights.append(
+                f"✔️ **Eficiencia aceptable**: ROAS promedio de {avg_roas:.2f} indica "
+                f"retorno positivo pero con espacio para optimización."
+            )
+        else:
+            insights.append(
+                f"⚠️ **Alerta de eficiencia**: ROAS promedio de {avg_roas:.2f} sugiere "
+                f"que el gasto en marketing no está generando suficiente retorno. "
+                f"Se recomienda revisión estratégica."
+            )
+    
+    # 7. Portfolio diversification
+    n_channels = len(contrib_df)
+    concentration = (by_share.iloc[0]["Share_of_Sales"] if n_channels > 0 else 0)
+    
+    if concentration > 0.6:  # Top channel > 60% of sales
+        insights.append(
+            f"⚠️ **Concentración de riesgo**: {by_share.iloc[0]['Canal']} representa "
+            f"{concentration*100:.1f}% de las ventas. Considere diversificar canales "
+            f"para reducir dependencia."
+        )
+    elif n_channels >= 3 and concentration < 0.4:
+        insights.append(
+            f"✅ **Portfolio balanceado**: Las ventas están bien distribuidas entre "
+            f"canales ({n_channels} canales activos), reduciendo riesgo de concentración."
+        )
+    
+    return insights

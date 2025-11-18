@@ -5,7 +5,8 @@ Data loading and validation module for MMM.
 import pandas as pd
 import numpy as np
 import re
-from typing import Dict, Tuple
+from pathlib import Path
+from typing import Dict, Tuple, List
 
 
 def sanitize_columns(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, str]]:
@@ -106,3 +107,79 @@ def validate_columns(df: pd.DataFrame, required_cols: list) -> bool:
     if missing:
         raise ValueError(f"Missing required columns: {missing}")
     return True
+
+
+def load_example_dataset() -> pd.DataFrame:
+    """
+    Load the example dataset (Basemediosfinal.csv) from the data/ folder.
+    
+    Returns:
+        DataFrame with example data
+        
+    Raises:
+        FileNotFoundError: If example dataset not found
+    """
+    # Get path relative to this module
+    current_dir = Path(__file__).parent
+    data_path = current_dir.parent / "data" / "Basemediosfinal.csv"
+    
+    if not data_path.exists():
+        raise FileNotFoundError(
+            f"Example dataset not found at {data_path}. "
+            "Please ensure Basemediosfinal.csv is in the data/ folder."
+        )
+    
+    return load_base_data(str(data_path))
+
+
+def validate_dataset_schema(df: pd.DataFrame) -> Tuple[bool, str, List[str]]:
+    """
+    Validate that a dataset has the minimum required schema for MMM.
+    
+    Requirements:
+    - At least 1 numeric column for target (sales)
+    - At least 1 numeric column for media channels
+    - At least 10 rows of data
+    
+    Args:
+        df: DataFrame to validate
+        
+    Returns:
+        Tuple of (is_valid, error_message, numeric_columns)
+    """
+    # Check minimum rows
+    if len(df) < 10:
+        return False, f"Dataset must have at least 10 rows. Found: {len(df)}", []
+    
+    # Get numeric columns
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    
+    if len(numeric_cols) < 2:
+        return (
+            False,
+            f"Dataset must have at least 2 numeric columns (1 for sales + 1+ for media). "
+            f"Found {len(numeric_cols)} numeric columns.\n\n"
+            f"Expected format:\n"
+            f"  - One column for sales/revenue (numeric)\n"
+            f"  - One or more columns for media spending (numeric)\n"
+            f"  - Optional: date/time column\n\n"
+            f"Example:\n"
+            f"  Date, TV_Budget, Radio_Budget, Sales\n"
+            f"  2024-01-01, 1000, 500, 5000\n"
+            f"  2024-01-02, 1200, 600, 5500\n",
+            numeric_cols
+        )
+    
+    # Check for extreme missing values
+    missing_pct = df[numeric_cols].isnull().mean()
+    high_missing = missing_pct[missing_pct > 0.5].index.tolist()
+    
+    if high_missing:
+        return (
+            False,
+            f"Columns with >50% missing values: {high_missing}. "
+            f"Please clean your data before uploading.",
+            numeric_cols
+        )
+    
+    return True, "", numeric_cols

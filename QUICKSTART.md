@@ -73,156 +73,57 @@ contrib_df, baseline, contributions = metrics.compute_contributions(
 )
 contrib_df = metrics.compute_roi_roas(contrib_df, df, media_cols, total_sales)
 
-# Visualizar
-fig = viz.plot_actual_vs_predicted(y, y_pred)
-fig.show()
-```
+# 🚀 Quick Start
 
-### Opción 3: Ejecutar Ejemplo
+Guía mínima para instalar y ejecutar la app. Para información técnica y ejemplos extensos, consulta `README.md`.
 
-```bash
-conda activate mmm_bayes
-python example_usage.py
-```
-
-### Opción 4: Análisis Exploratorio
+## Instalación rápida
 
 ```bash
+# Clonar
+git clone https://github.com/TheChieft/bayesian-marketing-mix-modeling.git
+cd bayesian-marketing-mix-modeling
+
+# Crear entorno (conda o venv)
+conda create -n mmm_bayes python=3.10 -y
 conda activate mmm_bayes
-jupyter notebook notebooks/01_eda_mmm.ipynb
-```
 
-## Estructura de mmm_core
-
-| Módulo | Función Principal |
-|--------|-------------------|
-| `data.py` | Carga, validación, sanitización, schema checking |
-| `transforms.py` | Adstock, Hill, estandarización |
-| `model.py` | PyMC: construcción, ajuste, predicción, train/test split |
-| `metrics.py` | R², RMSE, MAPE, ROI, ROAS, contribuciones, intervalos de credibilidad |
-| `viz.py` | Gráficos con Plotly (incluye diagnósticos) |
-
-## Nuevas funciones - Fase 5
-
-### Train/Test Split
-
-```python
-from mmm_core import model
-
-# División temporal sin shuffle
-X_train, X_test, y_train, y_test = model.split_train_test(
-    X_scaled, y_scaled, test_size=0.3, shuffle=False
-)
-
-# Fit con métricas de validación
-mmm, idata, metrics_dict = model.fit_mmm_with_validation(
-    X_train, y_train, X_test, y_test, method='advi'
-)
-
-print(f"Train R²: {metrics_dict['train_r2']:.3f}")
-print(f"Test R²: {metrics_dict['test_r2']:.3f}")
-```
-
-### Intervalos de Credibilidad
-
-```python
-from mmm_core import metrics
-
-# Calcular IC 90% (5-95 percentiles)
-uncertainty_df = metrics.compute_contribution_uncertainty(
-    X_saturated, idata, scaler_X, scaler_y, media_cols, ci_level=0.90
-)
-
-# uncertainty_df contiene:
-# - Contribución_media: valor esperado
-# - CI_lower: percentil 5
-# - CI_upper: percentil 95
-# - CI_width: ancho del intervalo
-
-# Interpretar
-for _, row in uncertainty_df.iterrows():
-    print(f"{row['Canal']}: {row['Contribución_media']:.0f} "
-          f"[{row['CI_lower']:.0f}, {row['CI_upper']:.0f}]")
-```
-
-### Diagnósticos Estadísticos
-
-```python
-from mmm_core import viz
-
-residuals = y_true - y_pred
-
-# 1. Residuos vs Predicción
-fig1 = viz.plot_residuals_vs_predicted(y_pred, residuals)
-fig1.show()
-
-# 2. Distribución de residuos
-fig2 = viz.plot_residuals_histogram(residuals)
-fig2.show()
-
-# 3. Q-Q Plot
-fig3 = viz.plot_qq_plot(residuals)
-fig3.show()
-```
-
-**Interpretación:**
-- Residuos dispersos aleatoriamente → buen ajuste ✓
-- Histograma con forma gaussiana → supuestos cumplidos ✓
-- Puntos en Q-Q plot sobre línea diagonal → normalidad ✓
-
-## Parámetros Clave
-
-### Adstock
-- **Tasa (r)**: 0.0 - 0.9
-- Efecto: Modela persistencia del impacto publicitario
-- Recomendado: 0.1 - 0.3
-
-### Hill (Saturación)
-- **Gamma (γ)**: 0.5 - 3.0
-- Efecto: Modela rendimientos decrecientes
-- Recomendado: 1.0 - 2.0
-
-### Método de Inferencia
-- **ADVI**: Rápido (~segundos), aproximado
-- **NUTS**: Lento (~minutos), más preciso
-
-## Métricas de Salida
-
-- **R²**: Bondad de ajuste (0-1, mayor es mejor)
-- **RMSE**: Error cuadrático medio (menor es mejor)
-- **MAPE**: Error porcentual absoluto medio (menor es mejor)
-- **ROI**: (Contribución - Inversión) / Inversión
-- **ROAS**: Contribución / Inversión (revenue per dollar)
-- **Share of Sales**: Contribución / Ventas Totales
-
-## Troubleshooting
-
-### Error: ModuleNotFoundError
-```bash
-# Asegúrate de tener el entorno activado
-conda activate mmm_bayes
+# Instalar dependencias
 pip install -r requirements.txt
 ```
 
-### Error: FileNotFoundError
+## Ejecutar la aplicación Streamlit
+
 ```bash
-# Verifica que estés en el directorio correcto
-cd /path/to/MarketingMixModeling
+# Rápido (script que limpia caches y arranca)
+./run_app.sh
+
+# O manualmente
+conda activate mmm_bayes
+streamlit run app/app_mmm_streamlit.py
 ```
 
-### Advertencia: ArviZ shape validation
-Es normal con ADVI (1 chain). Para múltiples chains usa NUTS.
+## Usar la librería (ejemplo mínimo)
 
-## Recursos
+```python
+from mmm_core import data, transforms, model
 
-- 📚 [Documentación PyMC](https://www.pymc.io/)
-- 📖 [Paper: Bayesian MMM](https://www.pymc-labs.io/blog-posts/mmm-google/)
-- 🎥 [Tutorial MMM](https://www.youtube.com/results?search_query=marketing+mix+modeling+pymc)
+df = data.load_base_data('data/Basemediosfinal.csv')
+df_trans, sat_cols = transforms.build_transformed_media(df, media_cols=['TV','Radio'], adstock_rate=0.1, hill_gamma=1.5)
+X = df_trans[sat_cols].values
+y = df_trans['Sales'].values
+X_scaled, y_scaled, scaler_X, scaler_y = transforms.standardize_data(X, y)
 
-## Soporte
+mmm = model.build_mmm_model(X_scaled, y_scaled)
+idata = model.fit_mmm_model(mmm, method='advi')
+```
 
-Para preguntas o issues: [GitHub Issues](https://github.com/TheChieft/bayesian-marketing-mix-modeling/issues)
+## Dónde buscar más
 
----
+- Para instalación detallada y ejemplos: `README.md`
+- Para errores comunes y limpieza de caches: `TROUBLESHOOTING.md`
+- Para ejemplos de insights listos para copiar en reportes: `INSIGHTS_EXAMPLES.md`
+- Para historial de cambios: `CHANGELOG.md`
 
-✨ **Happy Modeling!**
+¡Listo — la app debe arrancar con los pasos anteriores!
+from mmm_core import metrics

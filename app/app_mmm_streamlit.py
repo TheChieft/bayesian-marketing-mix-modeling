@@ -678,10 +678,3 @@ if st.sidebar.button("🚀 Ajustar modelo", type="primary"):
 
 else:
     st.info("👈 Configura el modelo en el panel lateral y haz clic en 'Ajustar modelo'")
-
-# ============================================================================
-# Footer
-# ============================================================================
-
-st.markdown("---")
-st.caption("🎓 Proyecto académico - Marketing Mix Modeling Bayesiano con PyMC | Desarrollado por TheChieft")

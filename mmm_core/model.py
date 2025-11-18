@@ -2,10 +2,15 @@
 PyMC model construction, fitting, and inference for MMM.
 """
 
+import logging
 import numpy as np
 import pymc as pm
 import arviz as az
-from typing import Tuple, Literal
+from typing import Tuple, Literal, Dict, Optional
+
+# Configure logging
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 
 def build_mmm_model(
@@ -170,3 +175,128 @@ def extract_beta_coefficients(idata: az.InferenceData) -> np.ndarray:
     """
     summary = az.summary(idata, var_names=["betas"])
     return summary["mean"].values
+
+
+def split_train_test(
+    X: np.ndarray,
+    y: np.ndarray,
+    test_size: float = 0.3,
+    shuffle: bool = False,
+    random_seed: int = 42
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Split data into training and testing sets.
+    
+    For time series data, typically use shuffle=False to respect temporal order.
+    
+    Args:
+        X: Feature matrix (n_samples, n_features)
+        y: Target vector (n_samples,)
+        test_size: Fraction of data to use for testing (0.0 to 1.0)
+        shuffle: Whether to shuffle data before splitting
+        random_seed: Random seed for shuffling
+        
+    Returns:
+        Tuple of (X_train, X_test, y_train, y_test)
+    """
+    if not 0.0 < test_size < 1.0:
+        raise ValueError(f"test_size must be between 0 and 1, got {test_size}")
+    
+    n_samples = len(y)
+    n_train = int(n_samples * (1 - test_size))
+    
+    if shuffle:
+        logger.info(f"Shuffling data with random_seed={random_seed}")
+        rng = np.random.RandomState(random_seed)
+        indices = rng.permutation(n_samples)
+    else:
+        logger.info("Using temporal order (no shuffle)")
+        indices = np.arange(n_samples)
+    
+    train_idx = indices[:n_train]
+    test_idx = indices[n_train:]
+    
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+    
+    logger.info(f"Split data: {len(y_train)} train samples, {len(y_test)} test samples")
+    
+    return X_train, X_test, y_train, y_test
+
+
+def fit_mmm_with_validation(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_test: Optional[np.ndarray] = None,
+    y_test: Optional[np.ndarray] = None,
+    method: Literal['advi', 'nuts'] = 'advi',
+    draws: int = 2000,
+    tune: int = 1000,
+    n_advi: int = 8000,
+    random_seed: int = 42
+) -> Tuple[pm.Model, az.InferenceData, Dict[str, float]]:
+    """
+    Fit MMM model with optional train/test validation.
+    
+    Args:
+        X_train: Training features (standardized)
+        y_train: Training target (standardized)
+        X_test: Test features (standardized), optional
+        y_test: Test target (standardized), optional
+        method: 'advi' or 'nuts'
+        draws: Number of posterior samples
+        tune: Number of tuning steps (NUTS only)
+        n_advi: Number of ADVI iterations
+        random_seed: Random seed
+        
+    Returns:
+        Tuple of (model, idata, metrics_dict)
+        metrics_dict contains:
+            - train_r2, train_rmse, train_mape
+            - test_r2, test_rmse, test_mape (if test data provided)
+    """
+    from .metrics import compute_fit_metrics
+    
+    # Build and fit model on training data
+    logger.info(f"Building MMM model with {X_train.shape[1]} features")
+    model = build_mmm_model(X_train, y_train, model_name="mmm_train")
+    
+    logger.info(f"Fitting model with method={method}")
+    idata = fit_mmm_model(
+        model=model,
+        method=method,
+        draws=draws,
+        tune=tune,
+        n_advi=n_advi,
+        random_seed=random_seed
+    )
+    
+    # Compute training metrics
+    y_pred_train, _ = predict_posterior(model, idata, X_train)
+    train_metrics = compute_fit_metrics(y_train, y_pred_train)
+    
+    metrics_dict = {
+        "train_r2": train_metrics["R2"],
+        "train_rmse": train_metrics["RMSE"],
+        "train_mape": train_metrics["MAPE"]
+    }
+    
+    logger.info(f"Training metrics - R²: {train_metrics['R2']:.4f}, RMSE: {train_metrics['RMSE']:.4f}")
+    
+    # Compute test metrics if test data provided
+    if X_test is not None and y_test is not None:
+        # For test set, we need to build a new model with test data
+        # but use the posterior from training
+        model_test = build_mmm_model(X_test, y_test, model_name="mmm_test")
+        y_pred_test, _ = predict_posterior(model_test, idata, X_test)
+        test_metrics = compute_fit_metrics(y_test, y_pred_test)
+        
+        metrics_dict.update({
+            "test_r2": test_metrics["R2"],
+            "test_rmse": test_metrics["RMSE"],
+            "test_mape": test_metrics["MAPE"]
+        })
+        
+        logger.info(f"Test metrics - R²: {test_metrics['R2']:.4f}, RMSE: {test_metrics['RMSE']:.4f}")
+    
+    return model, idata, metrics_dict

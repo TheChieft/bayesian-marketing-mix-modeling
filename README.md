@@ -13,7 +13,12 @@ Un proyecto académico de **Marketing Mix Modeling (MMM) Bayesiano** construido 
   - Adstock para efectos de arrastre
   - Saturación Hill para rendimientos decrecientes
 - **Métricas completas**: ROI, ROAS, contribuciones por canal
+- **Intervalos de credibilidad**: Cuantificación de incertidumbre (IC 90%)
+- **Train/Test split**: Validación rigurosa con métricas in-sample y out-of-sample
+- **Diagnósticos estadísticos**: Residuos, Q-Q plots, heteroscedasticidad
+- **Opciones de inferencia**: ADVI (rápido) y NUTS (preciso)
 - **Visualizaciones interactivas**: Gráficos de contribución, cascada, y comparación real vs predicho
+- **Insights automáticos**: Análisis de negocio generado por IA
 - **Arquitectura modular**: Código reutilizable y mantenible
 
 ## 📁 Estructura del proyecto
@@ -147,6 +152,73 @@ y ~ StudentT(ν=5, μ=μ, σ=σ)         # Likelihood robusto
 - **ROI** (Return on Investment): `(Contribución - Inversión) / Inversión`
 - **ROAS** (Return on Ad Spend): `Contribución / Inversión`
 - **Share of Sales**: `Contribución / Ventas totales`
+
+### 4. Intervalos de Credibilidad (Fase 5)
+
+Cuantificación de incertidumbre usando el posterior bayesiano:
+
+```python
+from mmm_core import metrics
+
+# Calcular IC 90% (5-95 percentiles)
+uncertainty_df = metrics.compute_contribution_uncertainty(
+    X_saturated, idata, scaler_X, scaler_y, media_cols, ci_level=0.90
+)
+# Retorna: Canal, Contribución_media, CI_lower, CI_upper, CI_width
+```
+
+**Interpretación:**
+- IC estrecho (CI_width pequeño) = alta certeza
+- IC amplio = alta incertidumbre, recolectar más datos
+- Ejemplo: "TV aporta entre 30-40% de ventas con 90% confianza"
+
+### 5. Train/Test Split (Fase 5)
+
+Validación rigurosa para detectar overfitting:
+
+```python
+from mmm_core import model
+
+# Split temporal (respeta orden cronológico)
+X_train, X_test, y_train, y_test = model.split_train_test(
+    X_scaled, y_scaled, test_size=0.3, shuffle=False
+)
+
+# Fit con validación automática
+mmm, idata, metrics_dict = model.fit_mmm_with_validation(
+    X_train, y_train, X_test, y_test, method='advi'
+)
+
+# metrics_dict contiene: train_r2, train_rmse, test_r2, test_rmse, etc.
+```
+
+**Criterios de overfitting:**
+- Si |R²_train - R²_test| > 0.15 → Overfitting severo
+- Si |R²_train - R²_test| < 0.05 → Buen ajuste
+
+### 6. Diagnósticos Estadísticos (Fase 5)
+
+Verificación de supuestos del modelo:
+
+```python
+from mmm_core import viz
+
+residuals = y_true - y_pred
+
+# 1. Residuos vs Predicción (heteroscedasticidad)
+fig1 = viz.plot_residuals_vs_predicted(y_pred, residuals)
+
+# 2. Histograma de Residuos (normalidad)
+fig2 = viz.plot_residuals_histogram(residuals)
+
+# 3. Q-Q Plot (normalidad)
+fig3 = viz.plot_qq_plot(residuals)
+```
+
+**Qué buscar:**
+- Residuos dispersos aleatoriamente alrededor de 0 ✓
+- Histograma con forma de campana gaussiana ✓
+- Puntos del Q-Q plot siguiendo la línea diagonal ✓
 
 ## 🧪 Testing
 

@@ -2,11 +2,17 @@
 Performance metrics, contribution analysis, and ROI/ROAS calculations.
 """
 
+import logging
 import numpy as np
 import pandas as pd
-from typing import Dict, Tuple, List
+import arviz as az
+from typing import Dict, Tuple, List, Optional
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, r2_score
+
+# Configure logging
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 
 def compute_fit_metrics(
@@ -254,7 +260,8 @@ def get_unit_label(unit_scale: str = "original", currency: str = "COP") -> str:
 def generate_business_insights(
     contrib_df: pd.DataFrame,
     total_sales: float,
-    total_budget: float = None
+    total_budget: Optional[float] = None,
+    uncertainty_df: Optional[pd.DataFrame] = None
 ) -> List[str]:
     """
     Generate business insights from contribution and ROI/ROAS analysis.
@@ -264,12 +271,14 @@ def generate_business_insights(
     - Underperforming channels
     - Investment efficiency (over/under-invested channels)
     - Budget allocation recommendations
+    - Uncertainty ranges (if provided)
     
     Args:
         contrib_df: DataFrame with columns [Canal, Contribución_total, 
                     Inversión_total, ROI, ROAS, Share_of_Sales]
         total_sales: Total sales value
         total_budget: Total marketing budget (optional)
+        uncertainty_df: DataFrame with CI_lower, CI_upper (optional)
         
     Returns:
         List of insight strings
@@ -280,6 +289,10 @@ def generate_business_insights(
     required_cols = ["Canal", "Contribución_total", "Inversión_total", "ROI", "ROAS", "Share_of_Sales"]
     if not all(col in contrib_df.columns for col in required_cols):
         return ["⚠️ Datos insuficientes para generar insights"]
+    
+    # Merge with uncertainty if provided
+    if uncertainty_df is not None:
+        contrib_df = contrib_df.merge(uncertainty_df[["Canal", "CI_lower", "CI_upper"]], on="Canal", how="left")
     
     # Sort by different metrics
     by_share = contrib_df.sort_values("Share_of_Sales", ascending=False)
@@ -294,11 +307,25 @@ def generate_business_insights(
     
     # 1. Top performer by sales contribution
     top_channel = by_share.iloc[0]
-    insights.append(
-        f"🏆 **Canal de mayor impacto**: {top_channel['Canal']} genera el "
-        f"{top_channel['Share_of_Sales']*100:.1f}% de las ventas totales "
-        f"({top_channel['Contribución_total']:,.0f} en ventas)."
-    )
+    top_channel_name = top_channel['Canal']
+    top_share = top_channel['Share_of_Sales'] * 100
+    top_contrib = top_channel['Contribución_total']
+    
+    # Add uncertainty if available
+    if 'CI_lower' in top_channel and 'CI_upper' in top_channel:
+        ci_lower_pct = (top_channel['CI_lower'] / total_sales) * 100
+        ci_upper_pct = (top_channel['CI_upper'] / total_sales) * 100
+        insights.append(
+            f"🏆 **Canal de mayor impacto**: {top_channel_name} genera el "
+            f"{top_share:.1f}% de las ventas totales "
+            f"(entre {ci_lower_pct:.1f}% y {ci_upper_pct:.1f}% con 90% de confianza)."
+        )
+    else:
+        insights.append(
+            f"🏆 **Canal de mayor impacto**: {top_channel_name} genera el "
+            f"{top_share:.1f}% de las ventas totales "
+            f"({top_contrib:,.0f} en ventas)."
+        )
     
     # 2. Best ROAS
     best_roas_channel = by_roas.iloc[0]
@@ -394,3 +421,138 @@ def generate_business_insights(
         )
     
     return insights
+
+
+def compute_contribution_uncertainty(
+    X_saturated: np.ndarray,
+    idata: az.InferenceData,
+    scaler_X: StandardScaler,
+    scaler_y: StandardScaler,
+    media_cols: List[str],
+    ci_level: float = 0.90
+) -> pd.DataFrame:
+    """
+    Compute contribution uncertainty using posterior samples.
+    
+    Returns credibility intervals (CI) for each channel's contribution.
+    Default is 90% CI (5th to 95th percentile).
+    
+    Args:
+        X_saturated: Saturated media features in original scale (n_samples, n_features)
+        idata: ArviZ InferenceData with posterior samples
+        scaler_X: Fitted StandardScaler for features
+        scaler_y: Fitted StandardScaler for target
+        media_cols: List of media channel names
+        ci_level: Credibility interval level (default 0.90 for 5-95%)
+        
+    Returns:
+        DataFrame with Canal, Contribución_media, CI_lower, CI_upper, CI_width
+    """
+    # Extract all posterior samples for betas and alpha
+    # Shape: (chains, draws, n_features)
+    beta_samples = idata.posterior["betas"].values
+    alpha_samples = idata.posterior["alpha"].values
+    
+    # Reshape to (total_samples, n_features)
+    beta_samples = beta_samples.reshape(-1, beta_samples.shape[-1])
+    alpha_samples = alpha_samples.flatten()
+    
+    n_samples_data = X_saturated.shape[0]
+    n_features = X_saturated.shape[1]
+    n_posterior_samples = beta_samples.shape[0]
+    
+    # Get scalers
+    sigma_y = scaler_y.scale_[0]
+    mu_y = scaler_y.mean_[0]
+    sigma_x = scaler_X.scale_
+    mu_x = scaler_X.mean_
+    
+    # Store contributions for each posterior sample
+    # Shape: (n_posterior_samples, n_features)
+    contrib_samples = np.zeros((n_posterior_samples, n_features))
+    
+    for i in range(n_posterior_samples):
+        beta_i = beta_samples[i, :]
+        
+        # Transform to original scale
+        gamma_i = sigma_y * beta_i / sigma_x
+        
+        # Compute contribution for each channel
+        for j in range(n_features):
+            Xj = X_saturated[:, j]
+            contrib_samples[i, j] = gamma_i[j] * Xj.sum()
+    
+    # Calculate statistics
+    lower_percentile = (1 - ci_level) / 2 * 100
+    upper_percentile = (1 - (1 - ci_level) / 2) * 100
+    
+    results = []
+    for j, channel in enumerate(media_cols):
+        contrib_mean = contrib_samples[:, j].mean()
+        contrib_lower = np.percentile(contrib_samples[:, j], lower_percentile)
+        contrib_upper = np.percentile(contrib_samples[:, j], upper_percentile)
+        contrib_width = contrib_upper - contrib_lower
+        
+        results.append({
+            "Canal": channel,
+            "Contribución_media": contrib_mean,
+            "CI_lower": contrib_lower,
+            "CI_upper": contrib_upper,
+            "CI_width": contrib_width
+        })
+    
+    df_uncertainty = pd.DataFrame(results)
+    
+    logger.info(f"Computed {ci_level*100:.0f}% credibility intervals for {len(media_cols)} channels")
+    
+    return df_uncertainty
+
+
+def compute_baseline_uncertainty(
+    n_samples_data: int,
+    idata: az.InferenceData,
+    scaler_X: StandardScaler,
+    scaler_y: StandardScaler,
+    ci_level: float = 0.90
+) -> Dict[str, float]:
+    """
+    Compute baseline contribution uncertainty.
+    
+    Args:
+        n_samples_data: Number of data samples
+        idata: ArviZ InferenceData with posterior samples
+        scaler_X: Fitted StandardScaler for features
+        scaler_y: Fitted StandardScaler for target
+        ci_level: Credibility interval level
+        
+    Returns:
+        Dictionary with baseline_mean, baseline_lower, baseline_upper
+    """
+    # Extract posterior samples
+    beta_samples = idata.posterior["betas"].values.reshape(-1, idata.posterior["betas"].shape[-1])
+    alpha_samples = idata.posterior["alpha"].values.flatten()
+    
+    sigma_y = scaler_y.scale_[0]
+    mu_y = scaler_y.mean_[0]
+    sigma_x = scaler_X.scale_
+    mu_x = scaler_X.mean_
+    
+    n_posterior_samples = len(alpha_samples)
+    baseline_samples = np.zeros(n_posterior_samples)
+    
+    for i in range(n_posterior_samples):
+        beta_i = beta_samples[i, :]
+        alpha_i = alpha_samples[i]
+        
+        gamma_i = sigma_y * beta_i / sigma_x
+        const_i = mu_y + sigma_y * alpha_i - np.sum(gamma_i * mu_x)
+        baseline_samples[i] = const_i * n_samples_data
+    
+    lower_percentile = (1 - ci_level) / 2 * 100
+    upper_percentile = (1 - (1 - ci_level) / 2) * 100
+    
+    return {
+        "baseline_mean": baseline_samples.mean(),
+        "baseline_lower": np.percentile(baseline_samples, lower_percentile),
+        "baseline_upper": np.percentile(baseline_samples, upper_percentile)
+    }

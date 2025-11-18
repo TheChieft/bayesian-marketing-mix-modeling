@@ -191,12 +191,57 @@ hill_gamma = st.sidebar.slider(
 )
 
 # Model fitting method
+st.sidebar.subheader("🔬 Método de inferencia")
+
 method = st.sidebar.selectbox(
-    "Método de inferencia",
+    "Algoritmo",
     options=["advi", "nuts"],
     index=0,
-    help="ADVI es rápido (recomendado), NUTS es más preciso pero lento"
+    format_func=lambda x: {
+        "advi": "ADVI (Rápido, recomendado)",
+        "nuts": "NUTS (Preciso, más lento)"
+    }[x],
+    help="ADVI: Inferencia variacional (minutos). NUTS: MCMC (puede tomar 10-30 min)"
 )
+
+if method == "nuts":
+    st.sidebar.warning(
+        "⚠️ **NUTS es experimental**: Más preciso pero mucho más lento. "
+        "Se recomienda solo para datasets pequeños (<100 filas)."
+    )
+    draws_nuts = st.sidebar.slider(
+        "Draws NUTS",
+        min_value=500,
+        max_value=2000,
+        value=1000,
+        step=100,
+        help="Número de muestras posteriores (menos muestras = más rápido)"
+    )
+else:
+    draws_nuts = 2000  # Default for ADVI
+
+# Train/Test Split
+st.sidebar.subheader("🎯 Train/Test Split")
+
+enable_validation = st.sidebar.checkbox(
+    "Habilitar validación",
+    value=False,
+    help="Divide datos en entrenamiento y prueba para evaluar generalización"
+)
+
+if enable_validation:
+    train_pct = st.sidebar.slider(
+        "% Datos de entrenamiento",
+        min_value=60,
+        max_value=90,
+        value=70,
+        step=5,
+        help="Porcentaje de datos para entrenamiento (resto para validación)"
+    )
+    test_pct = 100 - train_pct
+    st.sidebar.info(f"📊 Train: {train_pct}% | Test: {test_pct}%")
+else:
+    train_pct = 100
 
 # Unit scale selector
 st.sidebar.subheader("📊 Escala de unidades")
@@ -256,19 +301,45 @@ if st.sidebar.button("🚀 Ajustar modelo", type="primary"):
     
     X_scaled, y_scaled, scaler_X, scaler_y = transforms.standardize_data(X, y)
     
+    # Step 2.5: Train/Test Split (if enabled)
+    if enable_validation:
+        status_text.text(f"✂️ Dividiendo datos ({train_pct}% train, {test_pct}% test)...")
+        test_size = (100 - train_pct) / 100
+        X_train, X_test, y_train, y_test = model.split_train_test(
+            X_scaled, y_scaled, test_size=test_size, shuffle=False
+        )
+    else:
+        X_train, y_train = X_scaled, y_scaled
+        X_test, y_test = None, None
+    
     # Step 3: Build and fit model
     status_text.text(f"🔮 Ajustando modelo bayesiano ({method.upper()})...")
+    if method == "nuts":
+        st.warning("⏱️ NUTS puede tomar varios minutos. Por favor espera...")
     progress_bar.progress(40)
     
-    mmm_model = model.build_mmm_model(X_scaled, y_scaled)
-    idata = model.fit_mmm_model(
-        mmm_model,
-        method=method,
-        draws=2000,
-        tune=1000,
-        n_advi=8000,
-        random_seed=42
-    )
+    if enable_validation:
+        # Use validation-aware fitting
+        mmm_model, idata, validation_metrics = model.fit_mmm_with_validation(
+            X_train, y_train, X_test, y_test,
+            method=method,
+            draws=draws_nuts if method == "nuts" else 2000,
+            tune=1000 if method == "nuts" else 1000,
+            n_advi=8000,
+            random_seed=42
+        )
+    else:
+        # Standard fitting
+        mmm_model = model.build_mmm_model(X_train, y_train)
+        idata = model.fit_mmm_model(
+            mmm_model,
+            method=method,
+            draws=draws_nuts if method == "nuts" else 2000,
+            tune=1000 if method == "nuts" else 1000,
+            n_advi=8000,
+            random_seed=42
+        )
+        validation_metrics = {}
     
     status_text.text("✅ Modelo ajustado correctamente")
     progress_bar.progress(60)
@@ -281,7 +352,7 @@ if st.sidebar.button("🚀 Ajustar modelo", type="primary"):
     beta_means = model.extract_beta_coefficients(idata)
     alpha_mean = summary.loc["alpha", "mean"]
     
-    # Step 5: Predictions
+    # Step 5: Predictions (on full dataset for visualization)
     # Rebuild model for posterior predictive (PyMC requirement)
     mmm_model_pred = model.build_mmm_model(X_scaled, y_scaled)
     y_pred_scaled, _ = model.predict_posterior(mmm_model_pred, idata, X_scaled)
@@ -289,8 +360,9 @@ if st.sidebar.button("🚀 Ajustar modelo", type="primary"):
     # Transform back to original scale
     y_pred = transforms.inverse_transform_predictions(y_pred_scaled, scaler_y)
     y_true = y
+    residuals = y_true - y_pred
     
-    # Step 6: Metrics
+    # Step 6: Metrics (full dataset)
     fit_metrics = metrics.compute_fit_metrics(y_true, y_pred)
     
     # Step 7: Contributions
@@ -304,6 +376,17 @@ if st.sidebar.button("🚀 Ajustar modelo", type="primary"):
     # Step 8: ROI/ROAS
     contrib_df = metrics.compute_roi_roas(contrib_df, df, media_cols, total_sales)
     
+    # Step 9: Contribution uncertainty (credibility intervals)
+    status_text.text("🔍 Calculando intervalos de credibilidad (90%)...")
+    progress_bar.progress(90)
+    
+    uncertainty_df = metrics.compute_contribution_uncertainty(
+        X, idata, scaler_X, scaler_y, media_cols, ci_level=0.90
+    )
+    
+    # Merge uncertainty into contrib_df
+    contrib_df = contrib_df.merge(uncertainty_df[['Canal', 'CI_lower', 'CI_upper', 'CI_width']], on='Canal', how='left')
+    
     progress_bar.progress(100)
     status_text.text("✅ ¡Análisis completo!")
     
@@ -315,14 +398,56 @@ if st.sidebar.button("🚀 Ajustar modelo", type="primary"):
     
     # Metrics
     st.subheader("📊 Métricas de ajuste del modelo")
-    col1, col2, col3 = st.columns(3)
     
-    with col1:
-        st.metric("R²", f"{fit_metrics['R2']:.3f}" if not np.isnan(fit_metrics['R2']) else "N/A")
-    with col2:
-        st.metric("RMSE", f"{fit_metrics['RMSE']:,.3f}")
-    with col3:
-        st.metric("MAPE", f"{fit_metrics['MAPE']:.2f}%" if not np.isnan(fit_metrics['MAPE']) else "N/A")
+    if enable_validation and validation_metrics:
+        # Show both train and test metrics
+        st.markdown("**Métricas In-Sample (Training):**")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("R² Train", f"{validation_metrics['train_r2']:.3f}")
+        with col2:
+            st.metric("RMSE Train", f"{validation_metrics['train_rmse']:,.3f}")
+        with col3:
+            st.metric("MAPE Train", f"{validation_metrics['train_mape']:.2f}%")
+        
+        st.markdown("**Métricas Out-of-Sample (Test):**")
+        col4, col5, col6 = st.columns(3)
+        with col4:
+            r2_delta = validation_metrics['test_r2'] - validation_metrics['train_r2']
+            st.metric(
+                "R² Test",
+                f"{validation_metrics['test_r2']:.3f}",
+                delta=f"{r2_delta:.3f}",
+                delta_color="normal"
+            )
+        with col5:
+            rmse_delta = validation_metrics['test_rmse'] - validation_metrics['train_rmse']
+            st.metric(
+                "RMSE Test",
+                f"{validation_metrics['test_rmse']:,.3f}",
+                delta=f"{rmse_delta:,.3f}",
+                delta_color="inverse"
+            )
+        with col6:
+            st.metric("MAPE Test", f"{validation_metrics['test_mape']:.2f}%")
+        
+        # Overfitting analysis
+        if abs(r2_delta) > 0.15:
+            st.warning(
+                f"⚠️ **Posible overfitting**: R² cae {abs(r2_delta):.3f} puntos entre train y test. "
+                "Considera simplificar el modelo o aumentar regularización."
+            )
+        elif abs(r2_delta) < 0.05:
+            st.success("✅ **Buen ajuste**: Las métricas train/test son consistentes. No hay señales de overfitting.")
+    else:
+        # Show full dataset metrics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("R²", f"{fit_metrics['R2']:.3f}" if not np.isnan(fit_metrics['R2']) else "N/A")
+        with col2:
+            st.metric("RMSE", f"{fit_metrics['RMSE']:,.3f}")
+        with col3:
+            st.metric("MAPE", f"{fit_metrics['MAPE']:.2f}%" if not np.isnan(fit_metrics['MAPE']) else "N/A")
     
     # Posterior summary
     with st.expander("🔬 Resumen bayesiano (ArviZ)"):
@@ -347,18 +472,46 @@ if st.sidebar.button("🚀 Ajustar modelo", type="primary"):
         lambda x: metrics.scale_to_units(x, unit_scale)
     )
     
+    # Scale CI if present
+    if 'CI_lower' in contrib_df_display.columns:
+        contrib_df_display["CI_lower"] = contrib_df_display["CI_lower"].apply(
+            lambda x: metrics.scale_to_units(x, unit_scale)
+        )
+        contrib_df_display["CI_upper"] = contrib_df_display["CI_upper"].apply(
+            lambda x: metrics.scale_to_units(x, unit_scale)
+        )
+        contrib_df_display["CI_width"] = contrib_df_display["CI_width"].apply(
+            lambda x: metrics.scale_to_units(x, unit_scale)
+        )
+    
     # Format and display table
+    format_dict = {
+        "Coeficiente_gamma": "{:.6f}",
+        "Contribución_total": "{:,.2f}",
+        "Inversión_total": "{:,.2f}",
+        "ROI": "{:.4f}",
+        "ROAS": "{:.4f}",
+        "Share_of_Sales": "{:.2%}"
+    }
+    
+    if 'CI_lower' in contrib_df_display.columns:
+        format_dict.update({
+            "CI_lower": "{:,.2f}",
+            "CI_upper": "{:,.2f}",
+            "CI_width": "{:,.2f}"
+        })
+    
     st.dataframe(
-        contrib_df_display.style.format({
-            "Coeficiente_gamma": "{:.6f}",
-            "Contribución_total": "{:,.2f}",
-            "Inversión_total": "{:,.2f}",
-            "ROI": "{:.4f}",
-            "ROAS": "{:.4f}",
-            "Share_of_Sales": "{:.2%}"
-        }),
+        contrib_df_display.style.format(format_dict),
         use_container_width=True
     )
+    
+    if 'CI_lower' in contrib_df_display.columns:
+        st.info(
+            "💡 **Intervalos de Credibilidad (IC 90%)**: CI_lower y CI_upper muestran el rango "
+            "donde se encuentra la contribución real con 90% de probabilidad bayesiana. "
+            "Rangos amplios indican mayor incertidumbre."
+        )
     
     st.caption(f"💡 Valores mostrados en: **{unit_label}**")
     
@@ -371,7 +524,7 @@ if st.sidebar.button("🚀 Ajustar modelo", type="primary"):
     
     # Generate insights
     total_budget = contrib_df["Inversión_total"].sum()
-    insights = metrics.generate_business_insights(contrib_df, total_sales, total_budget)
+    insights = metrics.generate_business_insights(contrib_df, total_sales, total_budget, uncertainty_df)
     
     # Display insights
     for insight in insights:
@@ -488,6 +641,33 @@ if st.sidebar.button("🚀 Ajustar modelo", type="primary"):
     st.subheader("🎯 Ajuste del modelo: Real vs Predicho")
     fig_pred = viz.plot_actual_vs_predicted(y_true, y_pred, target_col)
     st.plotly_chart(fig_pred, use_container_width=True)
+    
+    # Diagnostic plots
+    with st.expander("🔬 Diagnósticos del Modelo", expanded=False):
+        st.markdown("""
+        **¿Qué evalúan estos gráficos?**
+        - **Residuos vs Predicción**: Detecta heterocedasticidad (varianza no constante) y no-linealidad.
+          Idealmente, los puntos deben estar dispersos aleatoriamente alrededor de 0.
+        - **Histograma de Residuos**: Verifica normalidad. Debe parecerse a una campana de Gauss.
+        - **Q-Q Plot**: Confirma normalidad. Los puntos deben seguir la línea roja.
+        """)
+        
+        col_diag1, col_diag2 = st.columns(2)
+        
+        with col_diag1:
+            fig_resid_vs_pred = viz.plot_residuals_vs_predicted(y_pred, residuals)
+            st.plotly_chart(fig_resid_vs_pred, use_container_width=True)
+        
+        with col_diag2:
+            fig_resid_hist = viz.plot_residuals_histogram(residuals)
+            st.plotly_chart(fig_resid_hist, use_container_width=True)
+        
+        # Q-Q Plot
+        try:
+            fig_qq = viz.plot_qq_plot(residuals)
+            st.plotly_chart(fig_qq, use_container_width=True)
+        except Exception as e:
+            st.warning(f"⚠️ No se pudo generar Q-Q plot: {e}")
     
     # Store results in session state for potential download
     st.session_state['last_results'] = {

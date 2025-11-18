@@ -1,5 +1,182 @@
 # Changelog - Marketing Mix Modeling Project
 
+## 🚀 Version 2.1.0 - Fase 5: Rigor Estadístico (2025-11-17)
+
+### ✨ Nuevas Funcionalidades
+
+#### 1. Train/Test Split
+- **Función `split_train_test()`** en `model.py`
+  - División temporal sin shuffle (respeta orden cronológico)
+  - Slider configurable en la app (60-90% entrenamiento)
+  - Métricas separadas: in-sample vs out-of-sample
+  - Detección automática de overfitting
+
+#### 2. Gráficos de Diagnóstico
+- **`plot_residuals_vs_predicted()`** en `viz.py`
+  - Detecta heterocedasticidad y no-linealidad
+  - Suavizado LOWESS para tendencias
+  - Puntos interactivos con Plotly
+
+- **`plot_residuals_histogram()`** en `viz.py`
+  - Histograma con curva normal sobrepuesta
+  - Estadísticos (media, desviación estándar)
+  - Verificación visual de normalidad
+
+- **`plot_qq_plot()`** en `viz.py`
+  - Quantile-Quantile plot para normalidad
+  - Comparación con distribución teórica
+  - Línea de referencia diagonal
+
+#### 3. Intervalos de Credibilidad
+- **`compute_contribution_uncertainty()`** en `metrics.py`
+  - Calcula IC 90% (5-95 percentiles) por canal
+  - Usa muestras del posterior bayesiano
+  - Cuantifica incertidumbre paramétrica
+
+- **`compute_baseline_uncertainty()`** en `metrics.py`
+  - IC para el baseline (intercepto)
+  - Propaga incertidumbre de alpha y betas
+
+- **Visualización en tabla**
+  - Columnas CI_lower, CI_upper, CI_width
+  - Escalado automático (miles/millones)
+  - Tooltip explicativo en la app
+
+#### 4. Mejoras en Inferencia
+- **Selector mejorado de método**
+  - Formato amigable: "ADVI (Rápido)" vs "NUTS (Preciso)"
+  - Advertencia prominente para NUTS:
+    * "⚠️ NUTS es experimental"
+    * Tiempo estimado: 10-30 minutos
+    * Recomendado solo para <100 filas
+
+- **Slider de draws para NUTS**
+  - Rango: 500-2000 draws
+  - Default: 1000 (compromiso velocidad/precisión)
+  - Ayuda contextual
+
+#### 5. Validación con Train/Test
+- **Función `fit_mmm_with_validation()`** en `model.py`
+  - Entrena en train set
+  - Evalúa en test set sin reentrenar
+  - Retorna ambas métricas automáticamente
+
+- **Métricas duales en la app**
+  - Sección "In-Sample (Training)"
+  - Sección "Out-of-Sample (Test)"
+  - Deltas visuales con `st.metric()`
+  - Análisis de overfitting automático:
+    * Si |ΔR²| > 0.15 → Alerta de overfitting
+    * Si |ΔR²| < 0.05 → Mensaje de buen ajuste
+
+#### 6. Insights Mejorados con Incertidumbre
+- **Modificación de `generate_business_insights()`**
+  - Acepta `uncertainty_df` opcional
+  - Menciona IC en insights:
+    * "Canal X genera entre Y% y Z% de ventas (90% confianza)"
+  - Rangos amplios = mayor incertidumbre
+
+#### 7. Logging Estructurado
+- **Módulo `logging`** en `model.py` y `metrics.py`
+  - Nivel INFO para operaciones principales
+  - DEBUG para detalles de computación
+  - Sin prints en mmm_core (solo en example_usage.py)
+  - Formato consistente:
+    ```python
+    logger.info("Split data: 140 train, 60 test")
+    logger.info("Training metrics - R²: 0.8234")
+    ```
+
+---
+
+### 📊 Mejoras Técnicas
+
+**Arquitectura:**
+- Separación limpia entre fitting y validación
+- Posterior samples aprovechados para incertidumbre
+- Métodos estadísticamente rigurosos
+
+**Performance:**
+- Train/test split no duplica datos (usa índices)
+- Cálculo vectorizado de intervalos de credibilidad
+- Caché de transformaciones
+
+**UX:**
+- Expander "🔬 Diagnósticos del Modelo" con explicaciones
+- Tooltips educativos en cada gráfico
+- Progreso granular (10 pasos con status_text)
+
+---
+
+### 📝 Documentación Actualizada
+
+**Nuevos ejemplos:**
+- Uso de train/test split
+- Interpretación de IC
+- Análisis de residuos
+
+**Secciones añadidas:**
+- "Rigor estadístico" en README
+- "Diagnósticos" en QUICKSTART
+- Ejemplos de overfitting
+
+---
+
+### 🐛 Correcciones
+
+**Type hints:**
+- `Optional[...]` para parámetros opcionales
+- `Dict[str, float]` para contributions
+- `Tuple[...]` consistente en returns
+
+**Robustez:**
+- Try/except en Q-Q plot (scipy opcional)
+- Validación de test_size en split
+- Handling de IC cuando no hay datos
+
+---
+
+### 📦 Líneas de Código Añadidas
+
+- `model.py`: +150 líneas (split + validation)
+- `viz.py`: +220 líneas (3 gráficos diagnóstico)
+- `metrics.py`: +140 líneas (uncertainty + baseline)
+- `app_mmm_streamlit.py`: +180 líneas (UI validación + diagnósticos)
+- **Total Fase 5**: ~690 líneas nuevas
+
+**Total acumulado**: ~2,970 líneas (vs 400 originales)
+
+---
+
+### 🎯 Objetivos Logrados - Fase 5
+
+✅ **Rigor estadístico:**
+- Train/test split implementado
+- Métricas de generalización
+- Detección de overfitting
+
+✅ **Diagnósticos:**
+- 3 gráficos de residuos
+- Verificación de supuestos
+- Guías interpretativas
+
+✅ **Incertidumbre:**
+- IC 90% por canal
+- Propagación bayesiana
+- Visualización clara
+
+✅ **Opciones avanzadas:**
+- NUTS funcional con advertencias
+- Configuración flexible
+- Documentación completa
+
+✅ **Calidad de código:**
+- Logging estructurado
+- Sin prints en core
+- Type hints completos
+
+---
+
 ## 🚀 Version 2.0.0 - Refactorización Completa (2025-11-17)
 
 ### ✨ Fase 1: Reestructuración de Carpetas
